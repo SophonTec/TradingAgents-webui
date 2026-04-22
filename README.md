@@ -165,6 +165,21 @@ python -m cli.main     # alternative: run directly from source
 ```
 You will see a screen where you can select your desired tickers, analysis date, LLM provider, research depth, and more.
 
+### WebUI Usage (Local/Ollama)
+
+Launch the browser UI:
+```bash
+tradingagents-webui
+```
+
+For Ollama, make sure your local model is available first:
+```bash
+ollama pull qwen3:latest
+ollama serve
+```
+
+Then open the URL printed by Streamlit (default: `http://localhost:8501`), set provider to `ollama`, choose your models, and run analysis.
+
 <p align="center">
   <img src="assets/cli/cli_init.png" width="100%" style="display: inline-block; margin: 0 2%;">
 </p>

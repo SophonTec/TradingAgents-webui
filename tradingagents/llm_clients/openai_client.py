@@ -1,6 +1,7 @@
 import os
 from typing import Any, Optional
 
+import httpx
 from langchain_openai import ChatOpenAI
 
 from .base_client import BaseLLMClient, normalize_content
@@ -81,6 +82,11 @@ class OpenAIClient(BaseLLMClient):
         # all model families. Third-party providers use Chat Completions.
         if self.provider == "openai":
             llm_kwargs["use_responses_api"] = True
+        elif self.provider == "ollama":
+            # Local Ollama should bypass proxy env vars to avoid SOCKS/HTTP
+            # proxy import/runtime errors when proxy settings are globally set.
+            llm_kwargs.setdefault("http_client", httpx.Client(trust_env=False))
+            llm_kwargs.setdefault("http_async_client", httpx.AsyncClient(trust_env=False))
 
         return NormalizedChatOpenAI(**llm_kwargs)
 
