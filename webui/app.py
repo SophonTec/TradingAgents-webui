@@ -15,6 +15,15 @@ from dotenv import load_dotenv
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
+from webui.reports import (
+    build_report_csv_bytes,
+    build_reports_summary_csv_bytes,
+    build_pdf_bytes,
+    build_structured_report,
+    list_saved_reports,
+    load_saved_report,
+    save_structured_report,
+)
 
 
 load_dotenv()
@@ -172,7 +181,7 @@ def _run_analysis(
     status_box,
     logs_box,
     agent_box,
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, list[str]]:
     graph = TradingAgentsGraph(
         selected_analysts=settings["selected_analysts"],
         debug=False,
@@ -238,7 +247,7 @@ def _run_analysis(
     _render_agent_status(agent_box, agent_status)
 
     decision = graph.process_signal(final_state["final_trade_decision"])
-    return final_state, decision
+    return final_state, decision, logs
 
 
 def _expected_sections(selected_analysts: list[str]) -> list[str]:
@@ -483,7 +492,7 @@ def run_streamlit_app() -> None:
 
         with st.spinner("Running analysis..."):
             try:
-                final_state, decision = _run_analysis(
+                final_state, decision, logs = _run_analysis(
                     ticker=ticker,
                     trade_date=run_date.isoformat(),
                     settings=settings,
@@ -496,8 +505,21 @@ def run_streamlit_app() -> None:
                 st.exception(exc)
                 return
 
+        structured_report = build_structured_report(
+            ticker=ticker,
+            trade_date=run_date.isoformat(),
+            settings=settings,
+            final_state=final_state,
+            decision=decision,
+            logs=logs,
+        )
+        report_path = save_structured_report(structured_report)
+        report_json = json.dumps(structured_report, indent=2, ensure_ascii=False, default=str)
+        report_pdf = build_pdf_bytes(structured_report)
+
         st.success("Analysis complete.")
         progress_bar.progress(100, text="Completed 100%")
+        st.caption(f"Report saved: `{report_path}`")
         st.subheader("Final Decision")
         st.code(decision)
 
@@ -518,11 +540,85 @@ def run_streamlit_app() -> None:
                     st.markdown(str(content))
 
         st.download_button(
-            "Download full state JSON",
-            data=json.dumps(final_state, indent=2, ensure_ascii=False, default=str),
-            file_name=f"{ticker}_{run_date.isoformat()}_state.json",
+            "Download structured JSON report",
+            data=report_json,
+            file_name=f"{structured_report['report_id']}.json",
             mime="application/json",
         )
+        st.download_button(
+            "Download PDF report",
+            data=report_pdf,
+            file_name=f"{structured_report['report_id']}.pdf",
+            mime="application/pdf",
+        )
+
+        with st.expander("Structured Data Preview"):
+            st.json(structured_report["outputs"])
+
+    st.divider()
+    st.subheader("History Reports")
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        ticker_filter = st.text_input("Filter ticker", value="").strip().upper()
+    with col_f2:
+        decision_filter = st.text_input("Filter decision contains", value="").strip().lower()
+    with col_f3:
+        history_limit = st.slider("History limit", min_value=10, max_value=200, value=50, step=10)
+
+    history = list_saved_reports(limit=history_limit)
+    if ticker_filter:
+        history = [h for h in history if str(h.get("ticker", "")).upper() == ticker_filter]
+    if decision_filter:
+        history = [h for h in history if decision_filter in str(h.get("decision", "")).lower()]
+
+    if not history:
+        st.caption("No matching reports.")
+        return
+
+    st.download_button(
+        "Download filtered summary CSV",
+        data=build_reports_summary_csv_bytes(history),
+        file_name="reports_summary.csv",
+        mime="text/csv",
+        key="hist_summary_csv",
+    )
+
+    selected = st.selectbox(
+        "Select a report",
+        options=list(range(len(history))),
+        format_func=lambda i: (
+            f"{history[i]['created_at']} | {history[i]['ticker']} | "
+            f"{history[i]['trade_date']} | {history[i]['report_id']}"
+        ),
+    )
+    selected_meta = history[selected]
+    selected_report = load_saved_report(selected_meta["path"])
+    st.caption(f"Stored file: `{selected_meta['path']}`")
+    st.code((selected_report.get("summary", {}) or {}).get("decision", ""))
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.download_button(
+            "Download selected JSON",
+            data=json.dumps(selected_report, indent=2, ensure_ascii=False, default=str),
+            file_name=f"{selected_report.get('report_id', 'report')}.json",
+            mime="application/json",
+            key=f"hist_json_{selected_report.get('report_id', selected)}",
+        )
+    with col_b:
+        st.download_button(
+            "Download selected PDF",
+            data=build_pdf_bytes(selected_report),
+            file_name=f"{selected_report.get('report_id', 'report')}.pdf",
+            mime="application/pdf",
+            key=f"hist_pdf_{selected_report.get('report_id', selected)}",
+        )
+    st.download_button(
+        "Download selected CSV",
+        data=build_report_csv_bytes(selected_report),
+        file_name=f"{selected_report.get('report_id', 'report')}.csv",
+        mime="text/csv",
+        key=f"hist_csv_{selected_report.get('report_id', selected)}",
+    )
 
 
 def main() -> None:
