@@ -106,6 +106,30 @@ def _model_values(provider: str, mode: str) -> list[str]:
     return [value for _, value in MODEL_OPTIONS[provider][mode]]
 
 
+def _get_ollama_local_models() -> list[str]:
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return []
+
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    # ollama list output: header then rows, first column is NAME.
+    models: list[str] = []
+    for line in lines[1:]:
+        name = line.split()[0]
+        if name:
+            models.append(name)
+    return models
+
+
 def _build_config(
     provider: str,
     deep_model: str,
@@ -134,20 +158,30 @@ def _render_sidebar() -> dict[str, Any]:
         index=list(PROVIDER_BASE_URLS.keys()).index("ollama"),
     )
 
-    quick_choices = _model_values(provider, "quick")
-    deep_choices = _model_values(provider, "deep")
-    default_quick = quick_choices[0] if quick_choices else DEFAULT_CONFIG["quick_think_llm"]
-    default_deep = deep_choices[0] if deep_choices else DEFAULT_CONFIG["deep_think_llm"]
-
-    if quick_choices:
-        quick_model = st.sidebar.selectbox("Quick Model", options=quick_choices, index=0)
+    if provider == "ollama":
+        local_models = _get_ollama_local_models()
+        if local_models:
+            quick_model = st.sidebar.selectbox("Quick Model", options=local_models, index=0)
+            deep_model = st.sidebar.selectbox("Deep Model", options=local_models, index=0)
+        else:
+            st.sidebar.warning("No local Ollama models found. Run: `ollama list` / `ollama pull <model>`")
+            quick_model = st.sidebar.text_input("Quick Model", value="glm-4.7-flash:latest").strip()
+            deep_model = st.sidebar.text_input("Deep Model", value="glm-4.7-flash:latest").strip()
     else:
-        quick_model = st.sidebar.text_input("Quick Model", value=default_quick).strip()
+        quick_choices = _model_values(provider, "quick")
+        deep_choices = _model_values(provider, "deep")
+        default_quick = quick_choices[0] if quick_choices else DEFAULT_CONFIG["quick_think_llm"]
+        default_deep = deep_choices[0] if deep_choices else DEFAULT_CONFIG["deep_think_llm"]
 
-    if deep_choices:
-        deep_model = st.sidebar.selectbox("Deep Model", options=deep_choices, index=0)
-    else:
-        deep_model = st.sidebar.text_input("Deep Model", value=default_deep).strip()
+        if quick_choices:
+            quick_model = st.sidebar.selectbox("Quick Model", options=quick_choices, index=0)
+        else:
+            quick_model = st.sidebar.text_input("Quick Model", value=default_quick).strip()
+
+        if deep_choices:
+            deep_model = st.sidebar.selectbox("Deep Model", options=deep_choices, index=0)
+        else:
+            deep_model = st.sidebar.text_input("Deep Model", value=default_deep).strip()
 
     backend_url_default = PROVIDER_BASE_URLS.get(provider) or ""
     backend_url = st.sidebar.text_input("Backend URL", value=backend_url_default)
